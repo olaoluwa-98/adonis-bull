@@ -1,6 +1,7 @@
 'use strict'
 
 const { Command } = require('@adonisjs/ace')
+const Config = use("Config")
 
 class Listen extends Command {
   static get inject() {
@@ -14,21 +15,25 @@ class Listen extends Command {
 
   static get signature() {
     return `
-      bull:listen
-      { --board?=false : Run bull's dashboard }
-      { --board-hostname?=@value : Dashboard hostname }
-      { --board-port?=@value : Dashboard port }
+      queue:listen
+      { --arena : Run bull arena dashboard }
     `
   }
 
   static get description() {
-    return 'Start the Bull listener'
+    return 'Start the Queue'
   }
 
-  async handle(args, { board = false, boardHostname = 'localhost', boardPort = 9999 }) {
+  async handle(args, { arena }) {
+    const bullConfig = Config.get('bull')
+    let onBoot = bullConfig.onBoot
+    if (onBoot === undefined || onBoot === null) onBoot = true
+    if (onBoot)
+      throw new Error("You cannot use the command while onBoot=true")
+
     this.Bull.process()
-    if (board) {
-      this.Bull.ui(boardPort, boardHostname)
+    if (arena) {
+      this.Bull.ui()
     }
   }
 }

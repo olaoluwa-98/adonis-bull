@@ -71,8 +71,9 @@
   },
   "dependencies": {
     "bull": "^3.22.1",
-    "bull-board": "^1.5.1",
+    "bull-arena": "^2.6.3",
     "date-fns": "^2.7.0",
+    "express-basic-auth": "^1.2.0",
     "human-interval": "^0.1.6"
   },
   "resolutions": {

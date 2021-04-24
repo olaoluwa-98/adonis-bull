@@ -1,12 +1,14 @@
 'use strict'
 
+const Arena = require('bull-arena')
+const basicAuth = require('express-basic-auth')
+
 const Bull = require('bull')
-const BullBoard = require('bull-board')
 const humanInterval = require('human-interval')
 
+const fs = require('fs')
 const differenceInMilliseconds = require('date-fns/differenceInMilliseconds')
 const parseISO = require('date-fns/parseISO')
-const fs = require('fs')
 
 class Queue {
   constructor(Logger, Config, jobs, app, resolver) {
@@ -18,9 +20,10 @@ class Queue {
 
     this._queues = null
 
-    const { connection, ...connections } = Config.get('bull')
+    const { connection, arena, ...connections } = Config.get('bull')
 
     this.config = connections[connection]
+    this.arenaConfig = arena
     this.connections = connections
   }
 
@@ -51,7 +54,6 @@ class Queue {
           bull: new Bull(Job.key, config),
           Job,
           name: Job.key,
-          handle: Job.handle,
           concurrency: Job.concurrency || 1,
           options: Job.options,
         }
@@ -67,10 +69,10 @@ class Queue {
     return this.queues[name]
   }
 
-  add(name, data, options) {
+  add(name, method, data, options) {
     const queue = this.get(name)
 
-    const job = queue.bull.add(data, { ...queue.options, ...options })
+    const job = queue.bull.add(method, data, { ...queue.options, ...options })
 
     return job
   }
@@ -100,15 +102,54 @@ class Queue {
     }
   }
 
-  ui(port = 9999, hostname = 'localhost') {
-    BullBoard.setQueues(
-      Object.values(this.queues).map(
-        (queue) => new BullBoard.BullAdapter(queue.bull)
-      )
+  ui() {
+    const queues = Object.values(this.queues).map((queue) => {
+      const Job = new queue.Job()
+      return {
+        name: queue.Job.key,
+        hostId: Job.constructor.name,
+        host: this.config.host,
+        port: this.config.port || 6379,
+        password: this.config.password || null,
+        type: 'bull',
+        prefix: this.config.keyPrefix || 'bull',
+      }
+    })
+
+    const port = this.arenaConfig.port || 1212
+    const arenaObj = Arena(
+      {
+        queues,
+      },
+      {
+        basePath: this.arenaConfig.prefix || '/',
+        disableListen: true,
+        useCdn: false,
+        port,
+      }
     )
 
-    const server = BullBoard.router.listen(port, hostname, () => {
-      this.Logger.info(`bull board on http://${hostname}:${port}`)
+    const express = require('express')
+    const app = express()
+
+    // for health check
+    app.get('/hello', function (req, res) {
+      res.send('hello')
+    })
+
+    if (this.arenaConfig.user && this.arenaConfig.password) {
+      const basicAuthConfig = { challenge: true, users: {} }
+      basicAuthConfig.users[this.arenaConfig.user || 'admin'] =
+        this.arenaConfig.password || ''
+
+      app.use(basicAuth(basicAuthConfig))
+    }
+
+    // Make arena's resources (js/css deps) available at the base app route
+    app.use('/', arenaObj)
+
+    const server = app.listen(port, () => {
+      this.Logger.info('Bull arena is listening at: %s', port)
     })
 
     const shutdown = () => {
@@ -130,6 +171,7 @@ class Queue {
 
   /* eslint handle-callback-err: "error" */
   handleException(error, job) {
+    let handler
     try {
       const exceptionHandlerFile = this.resolver
         .forDir('exceptions')
@@ -139,10 +181,15 @@ class Queue {
       const namespace = this.resolver
         .forDir('exceptions')
         .translate('QueueHandler')
-      const handler = this.app.make(this.app.use(namespace))
-      handler.report(error, job)
+      handler = this.app.make(this.app.use(namespace))
     } catch (err) {
       this.Logger.error(`name=${job.queue.name} id=${job.id}`)
+    }
+    if (handler) handler.handleError(error, job)
+    else {
+      this.Logger.error(`name=${job.queue.name} id=${job.id}`)
+      this.Logger.error('%o', error)
+      throw error
     }
   }
 
@@ -157,15 +204,15 @@ class Queue {
         queue.bull.on(item.eventName, Job[item.method].bind(Job))
       })
 
-      queue.bull.process(queue.concurrency, (job, done) => {
-        Job.handle(job)
-          .then((result) => {
-            done(null, result)
-          })
-          .catch((error) => {
-            this.handleException(error, job)
-            done(error)
-          })
+      queue.bull.process('*', queue.concurrency, async (job) => {
+        this.Logger.info('Received new job %s', job.name)
+        try {
+          if (job.name && Job[job.name]) return await Job[job.name](job)
+          if (Job.defaultHandle) return await Job.defaultHandle(job)
+        } catch (error) {
+          if (Job.onError) Job.onError(error, job)
+          else this.handleException(error, job)
+        }
       })
     })
 
