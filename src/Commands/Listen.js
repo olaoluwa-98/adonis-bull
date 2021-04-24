@@ -1,7 +1,7 @@
 'use strict'
 
 const { Command } = require('@adonisjs/ace')
-const Config = use("Config")
+const Config = use('Config')
 
 class Listen extends Command {
   static get inject() {
@@ -28,8 +28,7 @@ class Listen extends Command {
     const bullConfig = Config.get('bull')
     let onBoot = bullConfig.onBoot
     if (onBoot === undefined || onBoot === null) onBoot = true
-    if (onBoot)
-      throw new Error("You cannot use the command while onBoot=true")
+    if (onBoot) throw new Error('You cannot use the command while onBoot=true')
 
     this.Bull.process()
     if (arena) {

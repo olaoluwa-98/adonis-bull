@@ -105,14 +105,15 @@ class Queue {
   ui() {
     const queues = Object.values(this.queues).map((queue) => {
       const Job = new queue.Job()
+      const { redis: config } = this.config
       return {
         name: queue.Job.key,
         hostId: Job.constructor.name,
-        host: this.config.host,
-        port: this.config.port || 6379,
-        password: this.config.password || null,
+        host: config.host,
+        port: config.port || 6379,
+        password: config.password || null,
         type: 'bull',
-        prefix: this.config.keyPrefix || 'bull',
+        prefix: config.keyPrefix || 'bull',
       }
     })
 
